@@ -160,6 +160,7 @@ class ChatNode:
         session_id: str = "default",
         system_prompt: str = "",
         refresh_session: bool = False,
+        auto_clear_input: bool = True,
         llm_config: Optional[Dict] = None,
     ):
         provider = "ollama"

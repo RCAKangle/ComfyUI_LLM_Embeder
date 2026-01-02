@@ -77,6 +77,11 @@ Notes:
 
 Example graph: `LLM Config` drives `Chat (Ollama)` via `llm_config`, and outputs route to a `text` node plus `Chat History Viewer` for full history review.
 
+## Example Workflow
+![Example ComfyUI workflow](Example%20workflow.png)
+
+Drag this image into ComfyUI to load and run the workflow.
+
 ## API
 Frontend calls POST `/chat_optimize/chat` and receives:
 - `assistant_response`
