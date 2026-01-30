@@ -5,6 +5,8 @@ Local LLM chat nodes for ComfyUI, with a clean handoff path to downstream prompt
 ## Features
 - Multi-turn chat with Ollama `/api/chat`
 - Optional Hugging Face Inference API support via LLM Config
+- OpenAI-compatible chat support (OpenAI / DeepSeek / Qwen) via custom `base_url`
+- Anthropic Claude support via custom `base_url`
 - Session memory by `session_id` (in-memory only)
 - Optional `system_prompt`
 - Scrollable history in a modal viewer
@@ -39,13 +41,15 @@ Behavior:
 Outputs a `LLM_CONFIG` struct that can be shared across Chat nodes.
 
 Fields:
-- `provider`: `ollama` or `huggingface`
-- `base_url`: Ollama base URL
-- `model_name`: Ollama model name or Hugging Face model id
+- `provider`: `ollama`, `huggingface`, `openai`, `deepseek`, `qwen`, `claude`
+- `base_url`: provider base URL (see sections below)
+- `model_name`: model name or model id (provider specific)
 - `temperature`
 - `top_p`
 - `max_new_tokens`
 - `hf_token`: Hugging Face API token (recommended)
+- `hf_api_url`: optional override for Hugging Face Inference API endpoint
+- `api_key`: API key for OpenAI-compatible or Anthropic providers
 
 ### Chat History Viewer
 Shows `readable_history` and provides an "Open History" modal for full scroll.
@@ -58,6 +62,23 @@ Notes:
 - Many public models still require an HF token.
 - Chat history is converted into a single prompt before the API call.
 
+## OpenAI-Compatible API (OpenAI / DeepSeek / Qwen)
+When `provider=openai|deepseek|qwen`, the Chat node will call:
+`{base_url}/chat/completions`
+
+Notes:
+- Use an OpenAI-compatible base URL for your provider.
+- Set `api_key` in LLM Config.
+- `model_name` should be the provider's model id.
+
+## Anthropic Claude API
+When `provider=claude`, the Chat node will call:
+`{base_url}/v1/messages`
+
+Notes:
+- Use an Anthropic-compatible base URL.
+- Set `api_key` in LLM Config.
+
 ## Install
 1) Place this folder under `ComfyUI/custom_nodes/`
 2) Restart ComfyUI
@@ -68,9 +89,10 @@ Notes:
 
 ## Usage
 1) Create `Chat (Ollama)` and set `base_url` / `model_name`
-2) Set `action=send`, click Execute to chat
-3) When satisfied, set `action=deliver_to_optimizer` and Execute
-4) Use `assistant_response` output to feed your optimizer node
+2) (Optional) Add `LLM Config` to select provider and set `api_key`
+3) Set `action=send`, click Execute to chat
+4) When satisfied, set `action=deliver_to_optimizer` and Execute
+5) Use `assistant_response` output to feed your optimizer node
 
 ## Screenshot
 ![ComfyUI node graph example](LLM_embeder_nodes.png)

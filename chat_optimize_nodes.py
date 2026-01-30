@@ -119,6 +119,121 @@ def _call_hf_inference(
 
     return generated_text.strip()
 
+def _build_openai_compatible_url(base_url: str) -> str:
+    base = (base_url or "").rstrip("/")
+    if base.endswith("/chat/completions"):
+        return base
+    return base + "/chat/completions"
+
+def _call_openai_compatible_chat(
+    base_url: str,
+    model: str,
+    api_key: str,
+    messages: List[Dict[str, str]],
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    max_new_tokens: Optional[int] = None,
+    timeout: int = REQUEST_TIMEOUT,
+) -> str:
+    url = _build_openai_compatible_url(base_url)
+    headers = _build_headers()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    payload: Dict[str, object] = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+    }
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if top_p is not None:
+        payload["top_p"] = top_p
+    if max_new_tokens is not None:
+        payload["max_tokens"] = int(max_new_tokens)
+
+    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if isinstance(data, dict) and data.get("error"):
+        raise RuntimeError(data.get("error"))
+
+    choices = data.get("choices") if isinstance(data, dict) else None
+    if isinstance(choices, list) and choices:
+        message = choices[0].get("message", {})
+        return message.get("content", "").strip()
+
+    return ""
+
+def _split_system_messages(messages: List[Dict[str, str]]):
+    system_parts: List[str] = []
+    non_system: List[Dict[str, str]] = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            system_parts.append(msg.get("content", ""))
+        else:
+            non_system.append(msg)
+    return ("\n\n".join([p for p in system_parts if p]), non_system)
+
+def _call_anthropic_messages(
+    base_url: str,
+    model: str,
+    api_key: str,
+    messages: List[Dict[str, str]],
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    max_new_tokens: Optional[int] = None,
+    timeout: int = REQUEST_TIMEOUT,
+) -> str:
+    base = (base_url or "").rstrip("/")
+    if base.endswith("/v1/messages"):
+        url = base
+    elif base.endswith("/v1"):
+        url = base + "/messages"
+    else:
+        url = base + "/v1/messages"
+    headers = _build_headers()
+    if api_key:
+        headers["x-api-key"] = api_key
+    headers["anthropic-version"] = "2023-06-01"
+
+    system_prompt, non_system = _split_system_messages(messages)
+    formatted_messages: List[Dict[str, object]] = []
+    for msg in non_system:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        formatted_messages.append(
+            {"role": role, "content": [{"type": "text", "text": content}]}
+        )
+
+    payload: Dict[str, object] = {
+        "model": model,
+        "messages": formatted_messages,
+        "max_tokens": int(max_new_tokens or 256),
+    }
+    if system_prompt:
+        payload["system"] = system_prompt
+    if temperature is not None:
+        payload["temperature"] = temperature
+    if top_p is not None:
+        payload["top_p"] = top_p
+
+    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if isinstance(data, dict) and data.get("error"):
+        raise RuntimeError(data.get("error"))
+
+    content = data.get("content") if isinstance(data, dict) else None
+    if isinstance(content, list) and content:
+        first = content[0]
+        if isinstance(first, dict):
+            return first.get("text", "").strip()
+
+    return ""
+
 def _reset_history(session_id: str, system_prompt: str) -> List[Dict[str, str]]:
     history: List[Dict[str, str]] = []
     if system_prompt:
@@ -166,6 +281,7 @@ class ChatNode:
         provider = "ollama"
         hf_token = ""
         hf_api_url = ""
+        api_key = ""
         temperature = None
         top_p = None
         max_new_tokens = None
@@ -175,6 +291,7 @@ class ChatNode:
             base_url = llm_config.get("base_url", base_url)
             hf_token = llm_config.get("hf_token", "")
             hf_api_url = llm_config.get("hf_api_url", "")
+            api_key = llm_config.get("api_key", "")
             if "temperature" in llm_config:
                 temperature = llm_config["temperature"]
             if "top_p" in llm_config:
@@ -231,6 +348,26 @@ class ChatNode:
                         max_new_tokens=max_new_tokens,
                         api_url=hf_api_url or None,
                     )
+                elif provider in ("openai", "deepseek", "qwen"):
+                    response_text = _call_openai_compatible_chat(
+                        base_url,
+                        model_name,
+                        api_key,
+                        messages,
+                        temperature=temperature,
+                        top_p=top_p,
+                        max_new_tokens=max_new_tokens,
+                    )
+                elif provider == "claude":
+                    response_text = _call_anthropic_messages(
+                        base_url,
+                        model_name,
+                        api_key,
+                        messages,
+                        temperature=temperature,
+                        top_p=top_p,
+                        max_new_tokens=max_new_tokens,
+                    )
                 else:
                     options = {}
                     if temperature is not None:
@@ -259,13 +396,15 @@ class LLMConfigNode:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "provider": (["ollama", "huggingface"], {"default": "ollama"}),
+                "provider": (["ollama", "huggingface", "openai", "deepseek", "qwen", "claude"], {"default": "ollama"}),
                 "base_url": ("STRING", {"default": "http://127.0.0.1:11434"}),
                 "model_name": ("STRING", {"default": "llama3"}),
                 "temperature": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "max_new_tokens": ("INT", {"default": 256, "min": 1, "max": 8192, "step": 1}),
                 "hf_token": ("STRING", {"default": ""}),
+                "hf_api_url": ("STRING", {"default": ""}),
+                "api_key": ("STRING", {"default": ""}),
             }
         }
 
@@ -274,7 +413,7 @@ class LLMConfigNode:
     FUNCTION = "config"
     CATEGORY = "ChatOptimize"
 
-    def config(self, provider, base_url, model_name, temperature, top_p, max_new_tokens, hf_token):
+    def config(self, provider, base_url, model_name, temperature, top_p, max_new_tokens, hf_token, hf_api_url, api_key):
         return (
             {
                 "provider": provider,
@@ -284,6 +423,8 @@ class LLMConfigNode:
                 "top_p": top_p,
                 "max_new_tokens": max_new_tokens,
                 "hf_token": hf_token,
+                "hf_api_url": hf_api_url,
+                "api_key": api_key,
             },
         )
 

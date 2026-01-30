@@ -190,6 +190,12 @@ function getLLMConfig(node) {
     const tokenW = sourceNode.widgets?.find(w => w.name === "hf_token");
     if (tokenW) config.hf_token = tokenW.value;
 
+    const hfApiUrlW = sourceNode.widgets?.find(w => w.name === "hf_api_url");
+    if (hfApiUrlW) config.hf_api_url = hfApiUrlW.value;
+
+    const apiKeyW = sourceNode.widgets?.find(w => w.name === "api_key");
+    if (apiKeyW) config.api_key = apiKeyW.value;
+
     return config;
 }
 
