@@ -5,7 +5,7 @@ Local LLM chat nodes for ComfyUI, with a clean handoff path to downstream prompt
 ## Features
 - Multi-turn chat with Ollama `/api/chat`
 - Optional Hugging Face Inference API support via LLM Config
-- OpenAI-compatible chat support (OpenAI / DeepSeek / Qwen) via custom `base_url`
+- OpenAI-compatible chat support (local servers / OpenAI / DeepSeek / Qwen) via custom `base_url`
 - Anthropic Claude support via custom `base_url`
 - Session memory by `session_id` (in-memory only)
 - Optional `system_prompt`
@@ -15,10 +15,10 @@ Local LLM chat nodes for ComfyUI, with a clean handoff path to downstream prompt
 
 ## Nodes
 
-### Chat (Ollama)
+### Chat (LLM)
 Inputs:
-- `model_name`: model id (Ollama or HF, depending on provider)
-- `base_url`: Ollama base URL (ignored when provider is `huggingface`)
+- `model_name`: model name or model id for the selected provider
+- `base_url`: provider base URL (ignored when provider is `huggingface`)
 - `user_message`: user input text
 - `action`: `send` / `regenerate` / `clear` / `deliver_to_optimizer`
 - `session_id`: conversation id
@@ -41,7 +41,7 @@ Behavior:
 Outputs a `LLM_CONFIG` struct that can be shared across Chat nodes.
 
 Fields:
-- `provider`: `ollama`, `huggingface`, `openai`, `deepseek`, `qwen`, `claude`
+- `provider`: `ollama`, `openai_compatible`, `huggingface`, `openai`, `deepseek`, `qwen`, `claude`
 - `base_url`: provider base URL (see sections below)
 - `model_name`: model name or model id (provider specific)
 - `temperature`
@@ -62,14 +62,25 @@ Notes:
 - Many public models still require an HF token.
 - Chat history is converted into a single prompt before the API call.
 
-## OpenAI-Compatible API (OpenAI / DeepSeek / Qwen)
-When `provider=openai|deepseek|qwen`, the Chat node will call:
+## OpenAI-Compatible API
+When `provider=openai_compatible|openai|deepseek|qwen`, the Chat node will call:
 `{base_url}/chat/completions`
 
 Notes:
-- Use an OpenAI-compatible base URL for your provider.
-- Set `api_key` in LLM Config.
+- Use an OpenAI-compatible base URL that includes `/v1`, or enter the full `/v1/chat/completions` URL.
+- Set `api_key` when required by the server; it can remain empty for local servers without authentication.
 - `model_name` should be the provider's model id.
+
+### Local OpenAI-Compatible Servers
+Select `provider=openai_compatible` in LLM Config and use the base URL exposed by the local server:
+
+| Server | Example `base_url` |
+| --- | --- |
+| LM Studio | `http://127.0.0.1:1234/v1` |
+| llama.cpp (`llama-server`) | `http://127.0.0.1:8080/v1` |
+| LMDeploy | `http://127.0.0.1:23333/v1` |
+
+Use the exact model id reported by the server as `model_name`. Ports may differ if the server was started with custom settings.
 
 ## Anthropic Claude API
 When `provider=claude`, the Chat node will call:
@@ -83,12 +94,12 @@ Notes:
 1) Place this folder under `ComfyUI/custom_nodes/`
 2) Restart ComfyUI
 3) Add nodes:
-   - `Chat (Ollama)`
+   - `Chat (LLM)`
    - `LLM Config`
    - `Chat History Viewer`
 
 ## Usage
-1) Create `Chat (Ollama)` and set `base_url` / `model_name`
+1) Create `Chat (LLM)` and set `base_url` / `model_name`
 2) (Optional) Add `LLM Config` to select provider and set `api_key`
 3) Set `action=send`, click Execute to chat
 4) When satisfied, set `action=deliver_to_optimizer` and Execute
@@ -97,7 +108,7 @@ Notes:
 ## Screenshot
 ![ComfyUI node graph example](LLM_embeder_nodes.png)
 
-Example graph: `LLM Config` drives `Chat (Ollama)` via `llm_config`, and outputs route to a `text` node plus `Chat History Viewer` for full history review.
+Example graph: `LLM Config` drives `Chat (LLM)` via `llm_config`, and outputs route to a `text` node plus `Chat History Viewer` for full history review.
 
 ## Example Workflow
 ![Example ComfyUI workflow](Example%20workflow.png)

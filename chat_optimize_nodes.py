@@ -1,14 +1,23 @@
 import asyncio
 import json
 import requests
+import threading
 from typing import Dict, List, Optional
 from aiohttp import web
 from server import PromptServer
 
 # Simple in-memory stores for chat state.
 _chat_sessions: Dict[str, List[Dict[str, str]]] = {}
+_chat_session_locks = {}
+_chat_session_locks_guard = threading.Lock()
 
 REQUEST_TIMEOUT = 60
+
+def _get_chat_session_lock(session_id: str):
+    with _chat_session_locks_guard:
+        if session_id not in _chat_session_locks:
+            _chat_session_locks[session_id] = threading.Lock()
+        return _chat_session_locks[session_id]
 
 def _build_headers() -> Dict[str, str]:
     return {"Content-Type": "application/json"}
@@ -278,6 +287,31 @@ class ChatNode:
         auto_clear_input: bool = True,
         llm_config: Optional[Dict] = None,
     ):
+        with _get_chat_session_lock(session_id):
+            return self._chat_locked(
+                model_name=model_name,
+                base_url=base_url,
+                user_message=user_message,
+                action=action,
+                session_id=session_id,
+                system_prompt=system_prompt,
+                refresh_session=refresh_session,
+                auto_clear_input=auto_clear_input,
+                llm_config=llm_config,
+            )
+
+    def _chat_locked(
+        self,
+        model_name: str,
+        base_url: str,
+        user_message: str,
+        action: str = "send",
+        session_id: str = "default",
+        system_prompt: str = "",
+        refresh_session: bool = False,
+        auto_clear_input: bool = True,
+        llm_config: Optional[Dict] = None,
+    ):
         provider = "ollama"
         hf_token = ""
         hf_api_url = ""
@@ -337,49 +371,46 @@ class ChatNode:
 
         response_text = ""
         if messages and messages[-1].get("role") == "user":
-            try:
-                if provider == "huggingface":
-                    response_text = _call_hf_inference(
-                        model_name,
-                        hf_token,
-                        messages,
-                        temperature=temperature,
-                        top_p=top_p,
-                        max_new_tokens=max_new_tokens,
-                        api_url=hf_api_url or None,
-                    )
-                elif provider in ("openai", "deepseek", "qwen"):
-                    response_text = _call_openai_compatible_chat(
-                        base_url,
-                        model_name,
-                        api_key,
-                        messages,
-                        temperature=temperature,
-                        top_p=top_p,
-                        max_new_tokens=max_new_tokens,
-                    )
-                elif provider == "claude":
-                    response_text = _call_anthropic_messages(
-                        base_url,
-                        model_name,
-                        api_key,
-                        messages,
-                        temperature=temperature,
-                        top_p=top_p,
-                        max_new_tokens=max_new_tokens,
-                    )
-                else:
-                    options = {}
-                    if temperature is not None:
-                        options["temperature"] = temperature
-                    if top_p is not None:
-                        options["top_p"] = top_p
-                    if max_new_tokens is not None:
-                        options["num_predict"] = max_new_tokens
-                    response_text = _call_ollama_chat(base_url, model_name, messages, other_options=options)
-                messages.append({"role": "assistant", "content": response_text})
-            except Exception as exc:
-                response_text = f"[chat error] {exc}"
+            if provider == "huggingface":
+                response_text = _call_hf_inference(
+                    model_name,
+                    hf_token,
+                    messages,
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_new_tokens=max_new_tokens,
+                    api_url=hf_api_url or None,
+                )
+            elif provider in ("openai_compatible", "openai", "deepseek", "qwen"):
+                response_text = _call_openai_compatible_chat(
+                    base_url,
+                    model_name,
+                    api_key,
+                    messages,
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_new_tokens=max_new_tokens,
+                )
+            elif provider == "claude":
+                response_text = _call_anthropic_messages(
+                    base_url,
+                    model_name,
+                    api_key,
+                    messages,
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_new_tokens=max_new_tokens,
+                )
+            else:
+                options = {}
+                if temperature is not None:
+                    options["temperature"] = temperature
+                if top_p is not None:
+                    options["top_p"] = top_p
+                if max_new_tokens is not None:
+                    options["num_predict"] = max_new_tokens
+                response_text = _call_ollama_chat(base_url, model_name, messages, other_options=options)
+            messages.append({"role": "assistant", "content": response_text})
 
         _chat_sessions[session_id] = messages
         
@@ -396,7 +427,7 @@ class LLMConfigNode:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "provider": (["ollama", "huggingface", "openai", "deepseek", "qwen", "claude"], {"default": "ollama"}),
+                "provider": (["ollama", "openai_compatible", "huggingface", "openai", "deepseek", "qwen", "claude"], {"default": "ollama"}),
                 "base_url": ("STRING", {"default": "http://127.0.0.1:11434"}),
                 "model_name": ("STRING", {"default": "llama3"}),
                 "temperature": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
@@ -482,7 +513,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ChatNode": "Chat (Ollama)",
+    "ChatNode": "Chat (LLM)",
     "LLMConfigNode": "LLM Config",
     "ChatHistoryViewer": "Chat History Viewer",
 }
